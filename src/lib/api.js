@@ -38,7 +38,8 @@ export async function createCustomer(values) {
   return syncAfter(await supabase.from('ops_customers').insert({ ...values, created_by: await userId() }).select().single())
 }
 export async function createJob(values) {
-  return syncAfter(await supabase.from('ops_jobs').insert({ ...values, created_by: await userId() }).select().single())
+  const { employee_id, ...jobValues } = values
+  return syncAfter(await supabase.from('ops_jobs').insert({ ...jobValues, created_by: await userId() }).select().single())
 }
 export async function assignJob(jobId, employeeId) {
   return unwrap(await supabase.from('ops_job_assignments').upsert({ job_id: jobId, employee_id: employeeId }))
