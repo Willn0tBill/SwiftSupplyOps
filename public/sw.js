@@ -1,8 +1,41 @@
-const CACHE = 'swiftsupply-ops-v1'
-const SHELL = ['./', './index.html', './manifest.webmanifest', './icon.svg']
-self.addEventListener('install', e => e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL))))
-self.addEventListener('activate', e => e.waitUntil(self.clients.claim()))
-self.addEventListener('fetch', e => {
-  if (e.request.method !== 'GET') return
-  e.respondWith(fetch(e.request).then(r => { const copy=r.clone(); caches.open(CACHE).then(c=>c.put(e.request,copy)); return r }).catch(()=>caches.match(e.request)))
+const CACHE = 'swiftsupply-ops-v2'
+const SHELL = ['./manifest.webmanifest', './icon.svg']
+
+self.addEventListener('install', event => {
+  self.skipWaiting()
+  event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL)))
+})
+
+self.addEventListener('activate', event => {
+  event.waitUntil(
+    Promise.all([
+      caches.keys().then(keys => Promise.all(keys.filter(key => key !== CACHE).map(key => caches.delete(key)))),
+      self.clients.claim()
+    ])
+  )
+})
+
+self.addEventListener('fetch', event => {
+  if (event.request.method !== 'GET') return
+
+  // Always prefer the newest HTML/navigation response so an old Pages deploy
+  // cannot leave the app stuck on a stale blank shell.
+  if (event.request.mode === 'navigate') {
+    event.respondWith(
+      fetch(event.request, { cache: 'no-store' })
+        .catch(() => caches.match('./index.html'))
+    )
+    return
+  }
+
+  // Hashed Vite assets can be cached safely, but still prefer the network.
+  event.respondWith(
+    fetch(event.request)
+      .then(response => {
+        const copy = response.clone()
+        caches.open(CACHE).then(cache => cache.put(event.request, copy))
+        return response
+      })
+      .catch(() => caches.match(event.request))
+  )
 })
