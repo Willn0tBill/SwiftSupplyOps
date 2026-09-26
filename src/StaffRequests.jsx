@@ -32,14 +32,13 @@ function RequestRow({ request, onDone }) {
     <div className="rowcard staff-request-row">
       <div>
         <div className="title">{request.full_name || 'Staff applicant'}</div>
-        <div className="meta">Requested staff access</div>
+        <div className="meta">Pending staff approval</div>
       </div>
       <div className="actions staff-request-actions">
         <select className="btn" value={role} onChange={e => setRole(e.target.value)} disabled={busy}>
           <option value="intern">Intern</option>
           <option value="employee">Employee</option>
           <option value="manager">Manager</option>
-          <option value="viewer">Viewer</option>
         </select>
         <button className="btn sm good" onClick={approve} disabled={busy}>{busy ? 'Saving…' : 'Approve'}</button>
         <button className="btn sm danger" onClick={deny} disabled={busy}>Deny</button>
@@ -56,7 +55,7 @@ export default function StaffRequests() {
   const onEmployeesPage = hash.replace('#/', '') === 'employees'
 
   const pending = useMemo(
-    () => profiles.filter(p => !p.active && p.access_requested_at),
+    () => profiles.filter(p => !p.active && p.role === 'pending' && p.access_requested_at),
     [profiles]
   )
 
