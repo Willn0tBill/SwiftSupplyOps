@@ -4,7 +4,17 @@ const syncFunction = import.meta.env.VITE_SYNC_FUNCTION || 'sync-google-sheets'
 const unwrap = ({ data, error }) => { if (error) throw error; return data }
 
 export async function ensureProfile() {
-  return unwrap(await supabase.rpc('ops_ensure_profile'))
+  const profile = unwrap(await supabase.rpc('ops_ensure_profile'))
+  if (!profile?.active) {
+    if (typeof window !== 'undefined') {
+      window.alert('Your SwiftSupply Ops access request is pending. The Owner must approve your staff account before you can access anything.')
+    }
+    await supabase.auth.signOut()
+    const error = new Error('Staff approval required')
+    error.code = 'STAFF_APPROVAL_REQUIRED'
+    throw error
+  }
+  return profile
 }
 
 export async function loadAll() {
