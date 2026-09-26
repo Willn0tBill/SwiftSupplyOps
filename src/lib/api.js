@@ -96,7 +96,8 @@ export async function recordPsssSale(values) {
     p_payment_status: values.payment_status || 'paid',
     p_account: values.account || 'SS Cash',
     p_buyer_place: values.buyer_place || null,
-    p_notes: values.notes || null
+    p_notes: values.notes || null,
+    p_request_id: values.request_id
   }))
 }
 export async function createMaintenance(values) { return syncAfter(await supabase.from('ops_maintenance').insert({ ...values, reported_by: await userId() }).select().single()) }
