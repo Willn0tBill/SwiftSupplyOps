@@ -1,0 +1,10 @@
+{
+  "name": "SwiftSupply Ops",
+  "short_name": "SS Ops",
+  "description": "SwiftSupply operations, scheduling, vending, SSPW and PSSS management.",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#07111f",
+  "theme_color": "#0f172a",
+  "icons": [{"src":"./icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}]
+}
