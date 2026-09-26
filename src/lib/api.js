@@ -101,4 +101,5 @@ export async function recordPsssSale(values) {
 }
 export async function createMaintenance(values) { return syncAfter(await supabase.from('ops_maintenance').insert({ ...values, reported_by: await userId() }).select().single()) }
 export async function setRole(id, role) { return unwrap(await supabase.rpc('ops_set_profile_role', { p_user_id: id, p_role: role })) }
+export async function deactivateStaff(id) { return unwrap(await supabase.rpc('ops_deactivate_staff', { p_user_id: id })) }
 export async function signOut() { return supabase.auth.signOut() }
