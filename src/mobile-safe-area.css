@@ -1,0 +1,27 @@
+/* iOS / mobile safe-area fixes for installed PWA and edge-to-edge browsers */
+@media (max-width: 760px) {
+  .main {
+    padding-top: calc(18px + env(safe-area-inset-top));
+    padding-left: max(14px, env(safe-area-inset-left));
+    padding-right: max(14px, env(safe-area-inset-right));
+    padding-bottom: calc(92px + env(safe-area-inset-bottom));
+  }
+
+  .loginpage {
+    padding-top: calc(20px + env(safe-area-inset-top));
+    padding-right: max(20px, env(safe-area-inset-right));
+    padding-bottom: calc(20px + env(safe-area-inset-bottom));
+    padding-left: max(20px, env(safe-area-inset-left));
+  }
+
+  .modalback {
+    padding-top: env(safe-area-inset-top);
+  }
+}
+
+@supports (height: 100dvh) {
+  .app,
+  .loginpage {
+    min-height: 100dvh;
+  }
+}
