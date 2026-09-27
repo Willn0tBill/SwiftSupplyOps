@@ -2,15 +2,37 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { supabase } from './lib/supabase'
 
+const POSITION_OPTIONS = [
+  'General Manager',
+  'Operations Manager',
+  'Finance / Bookkeeping Manager',
+  'Sales Manager',
+  'Marketing / Social Media Manager',
+  'Customer Service Representative',
+  'SSPW Manager',
+  'SSPW Crew Lead',
+  'SSPW Technician',
+  'Vending Operations Manager',
+  'Vending Route Operator',
+  'Vending Maintenance Technician',
+  'Inventory / Purchasing Coordinator',
+  'PSSS Sales Representative',
+  'Business Development Representative',
+  'HR / Staff Coordinator',
+  'Intern'
+]
+
 function RequestRow({ request, onDone }) {
   const [role, setRole] = useState('intern')
+  const [jobTitle, setJobTitle] = useState('Intern')
   const [busy, setBusy] = useState(false)
 
   const approve = async () => {
     setBusy(true)
-    const { error } = await supabase.rpc('ops_set_profile_role', {
+    const { error } = await supabase.rpc('ops_approve_staff', {
       p_user_id: request.id,
-      p_role: role
+      p_role: role,
+      p_job_title: jobTitle
     })
     setBusy(false)
     if (error) return alert(error.message)
@@ -32,13 +54,16 @@ function RequestRow({ request, onDone }) {
     <div className="rowcard staff-request-row">
       <div>
         <div className="title">{request.full_name || 'Staff applicant'}</div>
-        <div className="meta">Pending staff approval</div>
+        <div className="meta">Pending staff approval • no business access yet</div>
       </div>
-      <div className="actions staff-request-actions">
-        <select className="btn" value={role} onChange={e => setRole(e.target.value)} disabled={busy}>
-          <option value="intern">Intern</option>
-          <option value="employee">Employee</option>
-          <option value="manager">Manager</option>
+      <div className="actions staff-request-actions" style={{ flexWrap: 'wrap' }}>
+        <select className="btn" value={role} onChange={e => setRole(e.target.value)} disabled={busy} title="Access level">
+          <option value="intern">Intern access</option>
+          <option value="employee">Employee access</option>
+          <option value="manager">Manager access</option>
+        </select>
+        <select className="btn" value={jobTitle} onChange={e => setJobTitle(e.target.value)} disabled={busy} title="Job position">
+          {POSITION_OPTIONS.map(position => <option key={position} value={position}>{position}</option>)}
         </select>
         <button className="btn sm good" onClick={approve} disabled={busy}>{busy ? 'Saving…' : 'Approve'}</button>
         <button className="btn sm danger" onClick={deny} disabled={busy}>Deny</button>
@@ -74,7 +99,7 @@ export default function StaffRequests() {
 
     const { data, error } = await supabase
       .from('ops_profiles')
-      .select('id,full_name,role,active,access_requested_at,access_denied_at,deactivated_at')
+      .select('id,full_name,role,active,job_title,access_requested_at,access_denied_at,deactivated_at')
       .order('access_requested_at', { ascending: false, nullsFirst: false })
     if (!error) setProfiles(data || [])
   }
@@ -143,7 +168,7 @@ export default function StaffRequests() {
       <div className="sectionhead">
         <div>
           <h2 style={{ marginBottom: 4 }}>Staff Requests</h2>
-          <div className="small muted">Approve only people you recognize as SwiftSupply staff.</div>
+          <div className="small muted">Choose both the person's access level and their actual company position before approving them.</div>
         </div>
         <span className="pill pending">{pending.length} pending</span>
       </div>
