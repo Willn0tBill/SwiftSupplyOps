@@ -1,8 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import {
   Home, CalendarDays, BriefcaseBusiness, Users, MoreHorizontal, Store, WalletCards,
-  Settings, LogOut, RefreshCw, X, Droplets, Package, ShoppingCart, UserCog,
-  Boxes, History, PlusCircle, Wrench, CheckCircle2, AlertTriangle
+  Settings, LogOut, RefreshCw, X, Droplets, ShoppingCart, UserCog,
+  Boxes, History, AlertTriangle
 } from 'lucide-react'
 import { supabase } from './lib/supabase'
 import * as api from './lib/api'
@@ -170,7 +170,7 @@ function Inventory({ data, profile, open }) {
   return <><Header title="Inventory" subtitle="Central stock for Vending and PSSS with movement history" actions={<><button className="btn" onClick={()=>open('productAny')}>+ Product</button>{canAdjust&&<button className="btn primary" onClick={()=>open('inventoryAdjust')}>Adjust stock</button>}</>}/>
     {low.length>0&&<div className="notice" style={{marginBottom:14}}><AlertTriangle size={16}/> {low.length} product{low.length===1?' is':'s are'} at or below reorder level.</div>}
     <div className="card"><div className="tablewrap"><table><thead><tr><th>Division</th><th>Product</th><th>Cost</th><th>Sell</th><th>Stock</th><th>Reorder</th><th>Status</th></tr></thead><tbody>{data.products.map(p=><tr key={p.id}><td>{p.business_unit==='SS'?'Vending':p.business_unit}</td><td>{p.name}</td><td>{money(p.unit_cost)}</td><td>{money(p.sell_price)}</td><td>{p.current_stock}</td><td>{p.reorder_level}</td><td>{Number(p.current_stock)<=Number(p.reorder_level||0)?<Pill status="pending">reorder</Pill>:<Pill status="active">ok</Pill>}</td></tr>)}</tbody></table></div></div>
-    <div className="card" style={{marginTop:16}}><div className="sectionhead"><h2>Stock movement history</h2><History size={19}/></div><div className="tablewrap"><table><thead><tr><th>Date</th><th>Product</th><th>Type</th><th>Change</th><th>Before</th><th>After</th><th>Notes</th></tr></thead><tbody>{data.inventoryMovements.slice(0,100).map(m=>{const p=data.products.find(x=>x.id===m.product_id);return <tr key={m.id}><td>{dt(m.created_at)}</td><td>{p?.name||m.product_id}</td><td>{m.movement_type}</td><td className={Number(m.quantity_delta)>0?'moneypos':'moneyneg'}>{Number(m.quantity_delta)>0?'+':''}{m.quantity_delta}</td><td>{m.stock_before}</td><td>{m.stock_after}</td><td>{m.notes||m.source_type||''}</td></tr>)}</tbody></table></div></div>
+    <div className="card" style={{marginTop:16}}><div className="sectionhead"><h2>Stock movement history</h2><History size={19}/></div><div className="tablewrap"><table><thead><tr><th>Date</th><th>Product</th><th>Type</th><th>Change</th><th>Before</th><th>After</th><th>Notes</th></tr></thead><tbody>{data.inventoryMovements.slice(0,100).map(m=>{const p=data.products.find(x=>x.id===m.product_id);return <tr key={m.id}><td>{dt(m.created_at)}</td><td>{p?.name||m.product_id}</td><td>{m.movement_type}</td><td className={Number(m.quantity_delta)>0?'moneypos':'moneyneg'}>{Number(m.quantity_delta)>0?'+':''}{m.quantity_delta}</td><td>{m.stock_before}</td><td>{m.stock_after}</td><td>{m.notes||m.source_type||''}</td></tr>})}</tbody></table></div></div>
   </>
 }
 
