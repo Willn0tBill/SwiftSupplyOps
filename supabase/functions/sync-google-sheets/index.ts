@@ -52,9 +52,24 @@ Deno.serve(async (req: Request) => {
     const text = await response.text();
     if (!response.ok) throw new Error(`Sheets webhook ${response.status}: ${text.slice(0, 500)}`);
 
+    let bridge: any;
+    try {
+      bridge = JSON.parse(text);
+    } catch {
+      throw new Error(`Sheets bridge returned a non-JSON response: ${text.slice(0, 500)}`);
+    }
+
+    if (bridge?.ok !== true) {
+      throw new Error(`Sheets bridge rejected the batch: ${bridge?.error || bridge?.message || text.slice(0, 500)}`);
+    }
+
+    if (Number(bridge?.processed ?? -1) !== events.length) {
+      throw new Error(`Sheets bridge acknowledged ${Number(bridge?.processed ?? 0)} of ${events.length} event(s).`);
+    }
+
     const ids = queue.map((q) => q.id);
     await db.from("ops_sync_queue").update({ status: "synced", synced_at: new Date().toISOString(), last_error: null }).in("id", ids);
-    return json({ ok: true, configured: true, synced: ids.length, response: text.slice(0, 500) });
+    return json({ ok: true, configured: true, synced: ids.length, bridge });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     const ids = queue.map((q) => q.id);
