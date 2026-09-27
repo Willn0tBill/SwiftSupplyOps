@@ -19,51 +19,84 @@ export default function SaleForm({ data, onClose, onSave, busy, error }) {
   const [validation, setValidation] = useState('')
   const submitting = useRef(false)
   const attempt = useRef(null)
-  const subtotal = lines.reduce((sum, line) => sum + line.catalogCents, 0)
+
+  function selectedLine() {
+    const product = products.find(p => p.id === pid)
+    const quantity = Number(qty)
+    if (!product) throw new Error('Choose a product first.')
+    if (!Number.isSafeInteger(quantity) || quantity < 1) throw new Error('Quantity must be a positive whole number.')
+    if (quantity > Number(product.current_stock || 0)) throw new Error(`Only ${product.current_stock} ${product.name} available.`)
+    return { product_id: pid, name: product.name, quantity, catalogCents: catalogTotal(product, quantity) }
+  }
+
+  const previewLines = lines.length ? lines : (() => { try { return [selectedLine()] } catch { return [] } })()
+  const subtotal = previewLines.reduce((sum, line) => sum + line.catalogCents, 0)
   const total = override === '' ? subtotal : cents(override)
   const collected = pay === 'paid' ? total : pay === 'partial' ? cents(partial) : 0
 
   function add() {
-    const product = products.find(p => p.id === pid)
-    const quantity = Number(qty)
-    const existing = lines.find(l => l.product_id === pid)?.quantity || 0
-    if (!product) return setValidation('Choose a product first.')
-    if (!Number.isSafeInteger(quantity) || quantity < 1) return setValidation('Quantity must be a positive whole number.')
-    if (existing + quantity > product.current_stock) return setValidation(`Only ${product.current_stock} ${product.name} available, including items already added.`)
-    const next = { product_id: pid, name: product.name, quantity: existing + quantity, catalogCents: catalogTotal(product, existing + quantity) }
-    setLines([...lines.filter(l => l.product_id !== pid), next])
-    setValidation('')
+    try {
+      const product = products.find(p => p.id === pid)
+      const quantity = Number(qty)
+      const existing = lines.find(l => l.product_id === pid)?.quantity || 0
+      if (!product) throw new Error('Choose a product first.')
+      if (!Number.isSafeInteger(quantity) || quantity < 1) throw new Error('Quantity must be a positive whole number.')
+      if (existing + quantity > product.current_stock) throw new Error(`Only ${product.current_stock} ${product.name} available, including items already added.`)
+      const next = { product_id: pid, name: product.name, quantity: existing + quantity, catalogCents: catalogTotal(product, existing + quantity) }
+      setLines([...lines.filter(l => l.product_id !== pid), next])
+      setValidation('')
+    } catch (e) {
+      setValidation(e.message)
+    }
   }
 
   async function submit(event) {
     event.preventDefault()
     if (busy || submitting.current) return
     try {
-      if (!Number.isFinite(total) || total < 0 || (override !== '' && Math.abs(Number(override) * 100 - total) > 0.000001)) throw new Error('Enter a non-negative total with at most two decimal places.')
-      if (!Number.isFinite(collected) || collected < 0 || collected > total) throw new Error('Amount collected must be between zero and the sale total.')
-      if (pay === 'partial' && (collected <= 0 || collected >= total)) throw new Error('For a partial payment, enter an amount greater than zero and less than the total.')
-      const values = { items: saleItems(lines, total), total: total / 100, collected: collected / 100, payment_status: pay, payment_method: method, account, buyer_place: buyer, notes }
+      const effectiveLines = lines.length ? lines : [selectedLine()]
+      const effectiveSubtotal = effectiveLines.reduce((sum, line) => sum + line.catalogCents, 0)
+      const effectiveTotal = override === '' ? effectiveSubtotal : cents(override)
+      const effectiveCollected = pay === 'paid' ? effectiveTotal : pay === 'partial' ? cents(partial) : 0
+
+      if (!Number.isFinite(effectiveTotal) || effectiveTotal < 0 || (override !== '' && Math.abs(Number(override) * 100 - effectiveTotal) > 0.000001)) throw new Error('Enter a non-negative total with at most two decimal places.')
+      if (!Number.isFinite(effectiveCollected) || effectiveCollected < 0 || effectiveCollected > effectiveTotal) throw new Error('Amount collected must be between zero and the sale total.')
+      if (pay === 'partial' && (effectiveCollected <= 0 || effectiveCollected >= effectiveTotal)) throw new Error('For a partial payment, enter an amount greater than zero and less than the total.')
+
+      const values = {
+        items: saleItems(effectiveLines, effectiveTotal),
+        total: effectiveTotal / 100,
+        collected: effectiveCollected / 100,
+        payment_status: pay,
+        payment_method: method,
+        account,
+        buyer_place: buyer,
+        notes
+      }
       const fingerprint = JSON.stringify(values)
       if (attempt.current && attempt.current.fingerprint !== fingerprint) throw new Error('A save was already attempted. Retry the unchanged sale, or close this form and check Recent sales before starting a different sale.')
       if (!attempt.current) attempt.current = { fingerprint, id: crypto.randomUUID() }
       setValidation('')
       submitting.current = true
       await onSave({ ...values, request_id: attempt.current.id })
-    } catch (e) { setValidation(e.message) }
-    finally { submitting.current = false }
+    } catch (e) {
+      setValidation(e.message)
+    } finally {
+      submitting.current = false
+    }
   }
 
   return <div className="modalback"><div className="modal" role="dialog" aria-modal="true" aria-labelledby="sale-title">
     <div className="modalhead"><h2 id="sale-title">Log PSSS sale</h2><button type="button" className="iconbtn" aria-label="Close sale" disabled={busy} onClick={onClose}>×</button></div>
     <form onSubmit={submit}>
       <fieldset disabled={busy} style={{ border: 0, padding: 0, margin: 0 }}>
-        <p className="small muted">Choose a product and quantity, then add it to the sale.</p>
+        <p className="small muted">Choose a product and quantity. You can add multiple items, or just press Save to use the current selection.</p>
         <div className="formgrid">
           <Field label="Product"><select value={pid} onChange={e => setPid(e.target.value)}>{products.map(p => <option key={p.id} value={p.id}>{p.name} ({p.current_stock} left)</option>)}</select></Field>
           <Field label="Quantity"><input type="number" min="1" step="1" value={qty} onChange={e => setQty(e.target.value)} /></Field>
         </div>
         <button type="button" className="btn" style={{ marginTop: 10 }} onClick={add}>Add item to sale</button>
-        {!lines.length && <p className="small muted">No items added yet. Add an item to enable Save Sale.</p>}
+        {!lines.length && <p className="small muted">Current selection will be included automatically when you press Save.</p>}
         <div className="list" style={{ marginTop: 12 }}>{lines.map(line => <div className="rowcard" key={line.product_id}>
           <div>{line.quantity} × {line.name}</div><div>{money(line.catalogCents / 100)} <button type="button" className="btn sm danger" aria-label={`Remove ${line.name}`} onClick={() => setLines(lines.filter(l => l.product_id !== line.product_id))}>Remove</button></div>
         </div>)}</div>
@@ -79,7 +112,7 @@ export default function SaleForm({ data, onClose, onSave, busy, error }) {
         <p>Total: <strong>{money(total / 100)}</strong> · Collected: {money(collected / 100)} · Owed: {money(Math.max(0, total - collected) / 100)}</p>
         {override !== '' && <p className="small muted">Custom price is allocated across the items to the cent.</p>}
         {validation && <div className="notice error" role="alert">{validation}</div>}{error}
-        <div className="actions" style={{ marginTop: 16, justifyContent: 'flex-end' }}><button type="button" className="btn" onClick={onClose}>Cancel</button><button type="submit" className="btn primary" disabled={busy || !lines.length}>{busy ? 'Saving…' : `Save ${money(total / 100)} sale`}</button></div>
+        <div className="actions" style={{ marginTop: 16, justifyContent: 'flex-end' }}><button type="button" className="btn" onClick={onClose}>Cancel</button><button type="submit" className="btn primary" disabled={busy || !products.length}>{busy ? 'Saving…' : `Save ${money(total / 100)} sale`}</button></div>
       </fieldset>
     </form>
   </div></div>
