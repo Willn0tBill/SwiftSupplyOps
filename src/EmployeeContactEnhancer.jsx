@@ -22,6 +22,10 @@ export default function EmployeeContactEnhancer() {
   const [userId, setUserId] = useState(null)
   const [, setScanVersion] = useState(0)
   const [page, setPage] = useState(() => location.hash)
+  const [editingPerson, setEditingPerson] = useState(null)
+  const [nameInput, setNameInput] = useState('')
+  const [saveBusy, setSaveBusy] = useState(false)
+  const [saveError, setSaveError] = useState('')
 
   const load = async () => {
     const [{ data: profileRows }, { data: authData }] = await Promise.all([
@@ -55,20 +59,46 @@ export default function EmployeeContactEnhancer() {
   const current = profiles.find(p => p.id === userId)
   const isOwner = current?.role === 'owner' && current?.active
 
-  const setName = async person => {
-    const next = window.prompt('Employee name', cleanName(person))
-    if (next === null) return
-    const name = next.trim()
+  const openNameEditor = person => {
+    setEditingPerson(person)
+    setNameInput(cleanName(person))
+    setSaveError('')
+  }
+
+  const closeNameEditor = () => {
+    if (saveBusy) return
+    setEditingPerson(null)
+    setNameInput('')
+    setSaveError('')
+  }
+
+  const saveName = async e => {
+    e.preventDefault()
+    if (!editingPerson) return
+    const name = nameInput.trim()
     if (!name) {
-      window.alert('Enter a name first.')
+      setSaveError('Enter a name first.')
       return
     }
-    const { error } = await supabase.rpc('ops_set_staff_name', { p_user_id: person.id, p_full_name: name })
+
+    setSaveBusy(true)
+    setSaveError('')
+    const { error } = await supabase.rpc('ops_set_staff_name', {
+      p_user_id: editingPerson.id,
+      p_full_name: name
+    })
+
     if (error) {
-      window.alert(error.message)
+      setSaveError(error.message)
+      setSaveBusy(false)
       return
     }
-    window.location.reload()
+
+    await load()
+    setSaveBusy(false)
+    setEditingPerson(null)
+    setNameInput('')
+    setTimeout(() => setScanVersion(v => v + 1), 0)
   }
 
   if (!page.includes('#/employees')) return null
@@ -82,7 +112,7 @@ export default function EmployeeContactEnhancer() {
     portals.push(createPortal(
       <div className="meta" style={{display:'flex', gap:8, alignItems:'center', flexWrap:'wrap', marginTop:3}}>
         <span>{person.email || 'No email saved'}</span>
-        {isOwner && <button type="button" className="btn sm" onClick={() => setName(person)}>{hasName ? 'Edit name' : 'Set name'}</button>}
+        {isOwner && <button type="button" className="btn sm" onClick={() => openNameEditor(person)}>{hasName ? 'Edit name' : 'Set name'}</button>}
       </div>,
       target,
       `active-email-${person.id}`
@@ -96,12 +126,47 @@ export default function EmployeeContactEnhancer() {
     portals.push(createPortal(
       <div className="meta" style={{display:'flex', gap:8, alignItems:'center', flexWrap:'wrap', marginTop:3}}>
         <span>{person.email || 'No email saved'}</span>
-        {isOwner && <button type="button" className="btn sm" onClick={() => setName(person)}>{cleanName(person) ? 'Edit name' : 'Set name'}</button>}
+        {isOwner && <button type="button" className="btn sm" onClick={() => openNameEditor(person)}>{cleanName(person) ? 'Edit name' : 'Set name'}</button>}
       </div>,
       target,
       `pending-email-${person.id}`
     ))
   })
+
+  if (editingPerson) {
+    portals.push(createPortal(
+      <div className="modalback" onMouseDown={e => e.target === e.currentTarget && closeNameEditor()}>
+        <div className="modal" role="dialog" aria-modal="true" aria-labelledby="employee-name-title">
+          <div className="modalhead">
+            <div>
+              <h2 id="employee-name-title">{cleanName(editingPerson) ? 'Edit employee name' : 'Set employee name'}</h2>
+              <div className="muted small">{editingPerson.email || 'No email saved'}</div>
+            </div>
+            <button type="button" className="iconbtn" onClick={closeNameEditor} disabled={saveBusy}>×</button>
+          </div>
+          <form onSubmit={saveName}>
+            <div className="field">
+              <label>Full name</label>
+              <input
+                autoFocus
+                value={nameInput}
+                onChange={e => setNameInput(e.target.value)}
+                placeholder="Employee name"
+                disabled={saveBusy}
+              />
+            </div>
+            {saveError && <div className="notice error">{saveError}</div>}
+            <div className="actions" style={{marginTop:16, justifyContent:'flex-end'}}>
+              <button type="button" className="btn" onClick={closeNameEditor} disabled={saveBusy}>Cancel</button>
+              <button type="submit" className="btn primary" disabled={saveBusy}>{saveBusy ? 'Saving…' : 'Save name'}</button>
+            </div>
+          </form>
+        </div>
+      </div>,
+      document.body,
+      'employee-name-modal'
+    ))
+  }
 
   return <>{portals}</>
 }
