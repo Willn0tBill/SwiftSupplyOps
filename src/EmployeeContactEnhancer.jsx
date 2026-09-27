@@ -20,7 +20,7 @@ function rowsForHeading(heading) {
 export default function EmployeeContactEnhancer() {
   const [profiles, setProfiles] = useState([])
   const [userId, setUserId] = useState(null)
-  const [scanVersion, setScanVersion] = useState(0)
+  const [, setScanVersion] = useState(0)
   const [page, setPage] = useState(() => location.hash)
 
   const load = async () => {
@@ -45,10 +45,9 @@ export default function EmployeeContactEnhancer() {
 
   useEffect(() => {
     if (!page.includes('#/employees')) return
-    const observer = new MutationObserver(() => setScanVersion(v => v + 1))
-    observer.observe(document.body, { childList: true, subtree: true })
-    const timer = setTimeout(() => setScanVersion(v => v + 1), 50)
-    return () => { observer.disconnect(); clearTimeout(timer) }
+    setScanVersion(v => v + 1)
+    const timer = setInterval(() => setScanVersion(v => v + 1), 500)
+    return () => clearInterval(timer)
   }, [page])
 
   const active = useMemo(() => profiles.filter(p => p.active), [profiles])
@@ -69,7 +68,6 @@ export default function EmployeeContactEnhancer() {
       window.alert(error.message)
       return
     }
-    await load()
     window.location.reload()
   }
 
@@ -84,11 +82,10 @@ export default function EmployeeContactEnhancer() {
     portals.push(createPortal(
       <div className="meta" style={{display:'flex', gap:8, alignItems:'center', flexWrap:'wrap', marginTop:3}}>
         <span>{person.email || 'No email saved'}</span>
-        {isOwner && !hasName && <button type="button" className="btn sm" onClick={() => setName(person)}>Set name</button>}
-        {isOwner && hasName && <button type="button" className="btn sm" onClick={() => setName(person)}>Edit name</button>}
+        {isOwner && <button type="button" className="btn sm" onClick={() => setName(person)}>{hasName ? 'Edit name' : 'Set name'}</button>}
       </div>,
       target,
-      `active-email-${person.id}-${scanVersion}`
+      `active-email-${person.id}`
     ))
   })
 
@@ -102,7 +99,7 @@ export default function EmployeeContactEnhancer() {
         {isOwner && <button type="button" className="btn sm" onClick={() => setName(person)}>{cleanName(person) ? 'Edit name' : 'Set name'}</button>}
       </div>,
       target,
-      `pending-email-${person.id}-${scanVersion}`
+      `pending-email-${person.id}`
     ))
   })
 
