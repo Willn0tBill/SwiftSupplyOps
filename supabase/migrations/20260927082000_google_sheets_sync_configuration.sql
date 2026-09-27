@@ -72,4 +72,24 @@ $$;
 revoke all on function public.ops_set_google_sheets_webhook(text) from public, anon;
 grant execute on function public.ops_set_google_sheets_webhook(text) to authenticated;
 
+create or replace function public.ops_set_google_sheets_shared_secret(p_secret text)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if auth.uid() is null then raise exception 'Not authenticated'; end if;
+  if public.ops_current_role() <> 'owner' then raise exception 'Owner access required'; end if;
+  if p_secret is null or length(btrim(p_secret)) < 24 then raise exception 'Shared secret must be at least 24 characters'; end if;
+
+  insert into public.ops_private_settings(key,value,updated_at)
+  values('google_sheets_shared_secret', btrim(p_secret), now())
+  on conflict (key) do update set value=excluded.value, updated_at=now();
+end;
+$$;
+
+revoke all on function public.ops_set_google_sheets_shared_secret(text) from public, anon;
+grant execute on function public.ops_set_google_sheets_shared_secret(text) to authenticated;
+
 notify pgrst, 'reload schema';
