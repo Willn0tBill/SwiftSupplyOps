@@ -27,16 +27,27 @@ export async function loadAll() {
     supabase.from('ops_vending_locations').select('*').order('name'),
     supabase.from('ops_vending_machines').select('*').order('label'),
     supabase.from('ops_vending_visits').select('*').order('created_at', { ascending: false }).limit(250),
+    supabase.from('ops_vending_restock_items').select('*').order('created_at', { ascending: false }).limit(1000),
     supabase.from('ops_products').select('*').order('business_unit').order('name'),
     supabase.from('ops_psss_sales').select('*').order('sold_at', { ascending: false }).limit(250),
     supabase.from('ops_psss_sale_items').select('*').limit(1000),
     supabase.from('ops_transactions').select('*').order('occurred_at', { ascending: false }).limit(500),
     supabase.from('ops_maintenance').select('*').order('reported_at', { ascending: false }).limit(250),
+    supabase.from('ops_calendar_events').select('*').order('starts_at', { ascending: true }).limit(500),
+    supabase.from('ops_inventory_movements').select('*').order('created_at', { ascending: false }).limit(1000),
+    supabase.from('ops_audit_log').select('*').order('created_at', { ascending: false }).limit(150),
     supabase.from('ops_sync_queue').select('id,status,last_error,created_at').order('created_at', { ascending: false }).limit(100)
   ])
-  const names = ['profiles','customers','jobs','assignments','subscriptions','locations','machines','visits','products','sales','saleItems','transactions','maintenance','syncQueue']
+  const names = [
+    'profiles','customers','jobs','assignments','subscriptions','locations','machines','visits',
+    'restockItems','products','sales','saleItems','transactions','maintenance','calendarEvents',
+    'inventoryMovements','auditLog','syncQueue'
+  ]
   const out = {}
-  queries.forEach((q, i) => { if (q.error && q.error.code !== '42501') throw q.error; out[names[i]] = q.data || [] })
+  queries.forEach((q, i) => {
+    if (q.error && q.error.code !== '42501') throw q.error
+    out[names[i]] = q.data || []
+  })
   return out
 }
 
@@ -87,6 +98,14 @@ export async function completeVisit(id, values) {
 }
 export async function addRestockItem(values) { return syncAfter(await supabase.rpc('ops_add_restock_item', values)) }
 export async function createProduct(values) { return syncAfter(await supabase.from('ops_products').insert(values).select().single()) }
+export async function adjustInventory(productId, quantityDelta, movementType='adjustment', notes=null) {
+  return unwrap(await supabase.rpc('ops_adjust_inventory', {
+    p_product_id: productId,
+    p_quantity_delta: Number(quantityDelta),
+    p_movement_type: movementType,
+    p_notes: notes || null
+  }))
+}
 export async function recordPsssSale(values) {
   return syncAfter(await supabase.rpc('ops_record_psss_sale', {
     p_items: values.items,
@@ -101,6 +120,44 @@ export async function recordPsssSale(values) {
   }))
 }
 export async function createMaintenance(values) { return syncAfter(await supabase.from('ops_maintenance').insert({ ...values, reported_by: await userId() }).select().single()) }
+
+export async function createCalendarEvent(values) {
+  return unwrap(await supabase.from('ops_calendar_events').insert({ ...values, created_by: await userId() }).select().single())
+}
+export async function updateCalendarEvent(id, values) {
+  return unwrap(await supabase.from('ops_calendar_events').update(values).eq('id', id).select().single())
+}
+export async function deleteCalendarEvent(id) {
+  return unwrap(await supabase.from('ops_calendar_events').delete().eq('id', id).select().single())
+}
+
+export async function createTransaction(values) {
+  const payload = {
+    ...values,
+    amount: Number(values.amount || 0),
+    recorded_by: await userId(),
+    source_type: values.source_type || 'manual'
+  }
+  return syncAfter(await supabase.from('ops_transactions').insert(payload).select().single())
+}
+
 export async function setRole(id, role) { return unwrap(await supabase.rpc('ops_set_profile_role', { p_user_id: id, p_role: role })) }
+export async function updateStaffProfile(id, values) {
+  return unwrap(await supabase.from('ops_profiles').update(values).eq('id', id).select().single())
+}
 export async function deactivateStaff(id) { return unwrap(await supabase.rpc('ops_deactivate_staff', { p_user_id: id })) }
+
+export async function requestPasswordReset(email) {
+  if (!email) throw new Error('Enter your email first.')
+  const redirectTo = typeof window !== 'undefined' ? `${window.location.origin}${window.location.pathname}` : undefined
+  const { error } = await supabase.auth.resetPasswordForEmail(email, redirectTo ? { redirectTo } : undefined)
+  if (error) throw error
+  return true
+}
+export async function updatePassword(password) {
+  if (!password || password.length < 8) throw new Error('Use a password with at least 8 characters.')
+  const { data, error } = await supabase.auth.updateUser({ password })
+  if (error) throw error
+  return data
+}
 export async function signOut() { return supabase.auth.signOut() }
