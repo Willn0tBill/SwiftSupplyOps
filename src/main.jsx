@@ -6,11 +6,12 @@ import SheetSyncStatus from './SheetSyncStatus'
 import EmployeeContactEnhancer from './EmployeeContactEnhancer'
 import AccountBalanceEnhancer from './AccountBalanceEnhancer'
 import SimpleDashboardEnhancer from './SimpleDashboardEnhancer'
+import InventoryCostEnhancer from './InventoryCostEnhancer'
 import './styles.css'
 import './mobile-safe-area.css'
 
 ReactDOM.createRoot(document.getElementById('root')).render(
-  <React.StrictMode><OpsV2 /><QuoteCalculator /><SheetSyncStatus /><EmployeeContactEnhancer /><AccountBalanceEnhancer /><SimpleDashboardEnhancer /></React.StrictMode>
+  <React.StrictMode><OpsV2 /><QuoteCalculator /><SheetSyncStatus /><EmployeeContactEnhancer /><AccountBalanceEnhancer /><SimpleDashboardEnhancer /><InventoryCostEnhancer /></React.StrictMode>
 )
 
 if ('serviceWorker' in navigator) {
