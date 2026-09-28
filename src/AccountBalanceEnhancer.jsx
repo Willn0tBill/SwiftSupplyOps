@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { supabase } from './lib/supabase'
 
@@ -9,21 +9,20 @@ export default function AccountBalanceEnhancer() {
   const [moneyTarget, setMoneyTarget] = useState(null)
   const [dashboardTarget, setDashboardTarget] = useState(null)
   const [balances, setBalances] = useState([])
-  const [ledgerNet, setLedgerNet] = useState(0)
   const [editing, setEditing] = useState(null)
   const [value, setValue] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
 
+  const totalBalance = useMemo(
+    () => balances.reduce((sum, row) => sum + Number(row.balance || 0), 0),
+    [balances]
+  )
+
   const load = async () => {
-    const [{ data: balanceRows, error: balanceError }, { data: txRows }] = await Promise.all([
-      supabase.from('ops_account_balances').select('*').order('account'),
-      supabase.from('ops_transactions').select('direction,status,amount').eq('status', 'Cleared')
-    ])
-    if (!balanceError) setBalances(balanceRows || [])
-    const net = (txRows || []).reduce((sum, row) => sum + (row.direction === 'In' ? Number(row.amount || 0) : -Number(row.amount || 0)), 0)
-    setLedgerNet(net)
+    const { data, error } = await supabase.from('ops_account_balances').select('*').order('account')
+    if (!error) setBalances(data || [])
   }
 
   useEffect(() => {
@@ -33,7 +32,15 @@ export default function AccountBalanceEnhancer() {
   }, [])
 
   useEffect(() => {
-    if (!page.includes('#/money') && !page.includes('#/home') && !page.endsWith('#/')) {
+    const onBalanceChanged = () => load()
+    addEventListener('swiftsupply-balance-changed', onBalanceChanged)
+    return () => removeEventListener('swiftsupply-balance-changed', onBalanceChanged)
+  }, [])
+
+  useEffect(() => {
+    const isMoney = page.includes('#/money')
+    const isHome = page.includes('#/home') || page.endsWith('#/') || !page.includes('#/')
+    if (!isMoney && !isHome) {
       setMoneyTarget(null)
       setDashboardTarget(null)
       return
@@ -41,32 +48,18 @@ export default function AccountBalanceEnhancer() {
 
     load()
     const scan = () => {
-      if (page.includes('#/money')) {
+      if (isMoney) {
         setMoneyTarget(document.querySelector('.main .grid.metrics'))
         setDashboardTarget(null)
-        return
+      } else {
+        setDashboardTarget(document.querySelector('.main .grid.metrics'))
+        setMoneyTarget(null)
       }
-      setMoneyTarget(null)
-      const metrics = [...document.querySelectorAll('.main .grid.metrics .metric')]
-      const first = metrics.find(el => el.querySelector('.label')?.textContent?.trim() === 'Company net movement') || metrics[0] || null
-      setDashboardTarget(first)
     }
     scan()
-    const timer = setInterval(scan, 300)
+    const timer = setInterval(scan, 350)
     return () => clearInterval(timer)
   }, [page])
-
-  useEffect(() => {
-    if (!dashboardTarget) return
-    const original = [...dashboardTarget.children]
-    original.forEach(node => { node.dataset.balanceEnhancerHidden = '1'; node.style.display = 'none' })
-    return () => original.forEach(node => {
-      if (node.dataset.balanceEnhancerHidden === '1') {
-        node.style.display = ''
-        delete node.dataset.balanceEnhancerHidden
-      }
-    })
-  }, [dashboardTarget])
 
   const openEdit = row => {
     setEditing(row)
@@ -92,23 +85,33 @@ export default function AccountBalanceEnhancer() {
       return
     }
     await load()
+    window.dispatchEvent(new Event('swiftsupply-balance-changed'))
     setEditing(null)
     setNotice('Balance updated')
     setTimeout(() => setNotice(''), 2500)
     setBusy(false)
   }
 
-  const personal = balances.find(row => row.account === 'Personal Account') || balances[0]
+  const singleAccount = balances.length === 1 ? balances[0] : null
 
   return <>
-    {dashboardTarget && personal && createPortal(<>
-      <div className="label">Personal / PSSS balance</div>
-      <div className="value">{money(personal.balance)}</div>
-      <div className="sub">Current account snapshot • recorded operating net {money(ledgerNet)}</div>
-    </>, dashboardTarget)}
+    {dashboardTarget && balances.length > 0 && createPortal(
+      <div className="metric" style={{ order: -1 }}>
+        <div className="label">Total money</div>
+        <div className="value">{money(totalBalance)}</div>
+        <div className="sub">Across {balances.length} tracked account{balances.length === 1 ? '' : 's'}</div>
+      </div>,
+      dashboardTarget
+    )}
 
     {moneyTarget && balances.length > 0 && createPortal(<>
-      {balances.map(row => <div className="metric" key={row.account}>
+      <div className="metric" style={{ order: -1 }}>
+        <div className="label">Total money</div>
+        <div className="value">{money(totalBalance)}</div>
+        <div className="sub">Actual money across tracked accounts</div>
+        {singleAccount && <button type="button" className="btn sm" style={{ marginTop: 8 }} onClick={() => openEdit(singleAccount)}>Update balance</button>}
+      </div>
+      {balances.length > 1 && balances.map(row => <div className="metric" key={row.account}>
         <div className="label">{row.account} balance</div>
         <div className="value">{money(row.balance)}</div>
         <div className="sub">Balance snapshot • not counted as revenue</div>
