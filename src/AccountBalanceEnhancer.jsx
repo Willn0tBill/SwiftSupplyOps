@@ -4,6 +4,17 @@ import { supabase } from './lib/supabase'
 
 const money = n => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(Number(n || 0))
 const when = v => v ? new Date(v).toLocaleString([], { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' }) : '—'
+const accountDescription = account => ({
+  'Personal Account':'Personal / PSSS money',
+  'Investor Funds':'Investment capital • not sales revenue',
+  'SS Cash':'SwiftSupply physical cash',
+  'SS Bank':'SwiftSupply bank balance'
+}[account] || 'Tracked account balance')
+const accountOrder = account => {
+  const order = ['Personal Account','Investor Funds','SS Cash','SS Bank']
+  const index = order.indexOf(account)
+  return index === -1 ? order.length : index
+}
 
 export default function AccountBalanceEnhancer() {
   const [page, setPage] = useState(() => location.hash)
@@ -22,6 +33,11 @@ export default function AccountBalanceEnhancer() {
 
   const totalBalance = useMemo(
     () => balances.reduce((sum, row) => sum + Number(row.balance || 0), 0),
+    [balances]
+  )
+
+  const dashboardBalances = useMemo(
+    () => [...balances].sort((a,b) => accountOrder(a.account) - accountOrder(b.account) || a.account.localeCompare(b.account)),
     [balances]
   )
 
@@ -72,6 +88,24 @@ export default function AccountBalanceEnhancer() {
     const timer = setInterval(scan, 350)
     return () => clearInterval(timer)
   }, [page])
+
+  // Make the dashboard's operating metric explicit so it cannot be confused with cash on hand.
+  useEffect(() => {
+    if (!dashboardTarget) return
+    const metrics = [...dashboardTarget.querySelectorAll('.metric')]
+    const card = metrics.find(el => ['Company net movement','Business activity net'].includes(el.querySelector('.label')?.textContent?.trim()))
+    if (!card) return
+    const label = card.querySelector('.label')
+    const sub = card.querySelector('.sub')
+    const oldLabel = label?.textContent
+    const oldSub = sub?.textContent
+    if (label) label.textContent = 'Business activity net'
+    if (sub) sub.textContent = 'Operating money in − expenses • not your account balance'
+    return () => {
+      if (label && oldLabel) label.textContent = oldLabel
+      if (sub && oldSub) sub.textContent = oldSub
+    }
+  }, [dashboardTarget])
 
   // Keep account pickers in PSSS sales and Money Entry aware of newly added accounts.
   useEffect(() => {
@@ -177,13 +211,21 @@ export default function AccountBalanceEnhancer() {
   }
 
   return <>
-    {dashboardTarget && balances.length > 0 && createPortal(
-      <div className="metric" style={{ order:-1 }}>
+    {dashboardTarget && balances.length > 0 && createPortal(<>
+      <div style={{ gridColumn:'1 / -1', order:-30, margin:'2px 0 -2px' }}>
+        <div className="small muted" style={{ fontWeight:800, letterSpacing:'.06em' }}>MONEY YOU ACTUALLY HAVE</div>
+      </div>
+      <div className="metric" style={{ order:-29 }}>
         <div className="label">Total money</div>
         <div className="value">{money(totalBalance)}</div>
-        <div className="sub">Across {balances.length} tracked account{balances.length === 1 ? '' : 's'}</div>
-      </div>, dashboardTarget
-    )}
+        <div className="sub">Actual money across all tracked accounts</div>
+      </div>
+      {dashboardBalances.map((row, index) => <div className="metric" style={{ order:-28 + index }} key={`dashboard-${row.account}`}>
+        <div className="label">{row.account}</div>
+        <div className="value">{money(row.balance)}</div>
+        <div className="sub">{accountDescription(row.account)}</div>
+      </div>)}
+    </>, dashboardTarget)}
 
     {moneyTarget && balances.length > 0 && createPortal(
       <div className="metric" style={{ order:-1 }}>
@@ -207,7 +249,7 @@ export default function AccountBalanceEnhancer() {
           {balances.map(row => <div className="metric" key={row.account}>
             <div className="label">{row.account}</div>
             <div className="value">{money(row.balance)}</div>
-            <div className="sub">Tracked balance</div>
+            <div className="sub">{accountDescription(row.account)}</div>
             <div className="actions" style={{ marginTop:10, flexWrap:'wrap' }}>
               <button type="button" className="btn sm" onClick={() => startTransfer(row.account)} disabled={balances.length < 2 || Number(row.balance) <= 0}>Transfer</button>
               <button type="button" className="btn sm" onClick={() => openEdit(row)}>Correct balance</button>
