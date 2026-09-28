@@ -6,8 +6,10 @@ const money = n => new Intl.NumberFormat('en-US', { style: 'currency', currency:
 
 export default function AccountBalanceEnhancer() {
   const [page, setPage] = useState(() => location.hash)
-  const [target, setTarget] = useState(null)
+  const [moneyTarget, setMoneyTarget] = useState(null)
+  const [dashboardTarget, setDashboardTarget] = useState(null)
   const [balances, setBalances] = useState([])
+  const [ledgerNet, setLedgerNet] = useState(0)
   const [editing, setEditing] = useState(null)
   const [value, setValue] = useState('')
   const [busy, setBusy] = useState(false)
@@ -15,8 +17,13 @@ export default function AccountBalanceEnhancer() {
   const [notice, setNotice] = useState('')
 
   const load = async () => {
-    const { data, error } = await supabase.from('ops_account_balances').select('*').order('account')
-    if (!error) setBalances(data || [])
+    const [{ data: balanceRows, error: balanceError }, { data: txRows }] = await Promise.all([
+      supabase.from('ops_account_balances').select('*').order('account'),
+      supabase.from('ops_transactions').select('direction,status,amount').eq('status', 'Cleared')
+    ])
+    if (!balanceError) setBalances(balanceRows || [])
+    const net = (txRows || []).reduce((sum, row) => sum + (row.direction === 'In' ? Number(row.amount || 0) : -Number(row.amount || 0)), 0)
+    setLedgerNet(net)
   }
 
   useEffect(() => {
@@ -26,16 +33,40 @@ export default function AccountBalanceEnhancer() {
   }, [])
 
   useEffect(() => {
-    if (!page.includes('#/money')) {
-      setTarget(null)
+    if (!page.includes('#/money') && !page.includes('#/home') && !page.endsWith('#/')) {
+      setMoneyTarget(null)
+      setDashboardTarget(null)
       return
     }
+
     load()
-    const scan = () => setTarget(document.querySelector('.main .grid.metrics'))
+    const scan = () => {
+      if (page.includes('#/money')) {
+        setMoneyTarget(document.querySelector('.main .grid.metrics'))
+        setDashboardTarget(null)
+        return
+      }
+      setMoneyTarget(null)
+      const metrics = [...document.querySelectorAll('.main .grid.metrics .metric')]
+      const first = metrics.find(el => el.querySelector('.label')?.textContent?.trim() === 'Company net movement') || metrics[0] || null
+      setDashboardTarget(first)
+    }
     scan()
     const timer = setInterval(scan, 300)
     return () => clearInterval(timer)
   }, [page])
+
+  useEffect(() => {
+    if (!dashboardTarget) return
+    const original = [...dashboardTarget.children]
+    original.forEach(node => { node.dataset.balanceEnhancerHidden = '1'; node.style.display = 'none' })
+    return () => original.forEach(node => {
+      if (node.dataset.balanceEnhancerHidden === '1') {
+        node.style.display = ''
+        delete node.dataset.balanceEnhancerHidden
+      }
+    })
+  }, [dashboardTarget])
 
   const openEdit = row => {
     setEditing(row)
@@ -67,10 +98,16 @@ export default function AccountBalanceEnhancer() {
     setBusy(false)
   }
 
-  if (!page.includes('#/money')) return null
+  const personal = balances.find(row => row.account === 'Personal Account') || balances[0]
 
   return <>
-    {target && balances.length > 0 && createPortal(<>
+    {dashboardTarget && personal && createPortal(<>
+      <div className="label">Personal / PSSS balance</div>
+      <div className="value">{money(personal.balance)}</div>
+      <div className="sub">Current account snapshot • recorded operating net {money(ledgerNet)}</div>
+    </>, dashboardTarget)}
+
+    {moneyTarget && balances.length > 0 && createPortal(<>
       {balances.map(row => <div className="metric" key={row.account}>
         <div className="label">{row.account} balance</div>
         <div className="value">{money(row.balance)}</div>
@@ -78,7 +115,7 @@ export default function AccountBalanceEnhancer() {
         <button type="button" className="btn sm" style={{ marginTop: 8 }} onClick={() => openEdit(row)}>Update balance</button>
       </div>)}
       {notice && <div className="notice" style={{ gridColumn: '1 / -1' }}>{notice}</div>}
-    </>, target)}
+    </>, moneyTarget)}
 
     {editing && createPortal(<div className="modalback" onMouseDown={e => e.target === e.currentTarget && !busy && setEditing(null)}>
       <div className="modal" role="dialog" aria-modal="true" aria-labelledby="balance-title">
