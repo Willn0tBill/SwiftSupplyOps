@@ -9,13 +9,11 @@ import SimpleDashboardEnhancer from './SimpleDashboardEnhancer'
 import InventoryCostEnhancer from './InventoryCostEnhancer'
 import PsssOrderCenter from './PsssOrderCenter'
 import PsssSubscriptionCenter from './PsssSubscriptionCenter'
-import UiPolishEnhancer from './UiPolishEnhancer'
 import './styles.css'
 import './mobile-safe-area.css'
-import './ui-polish.css'
 
 ReactDOM.createRoot(document.getElementById('root')).render(
-  <React.StrictMode><OpsV2 /><QuoteCalculator /><SheetSyncStatus /><EmployeeContactEnhancer /><AccountBalanceEnhancer /><SimpleDashboardEnhancer /><InventoryCostEnhancer /><PsssOrderCenter /><PsssSubscriptionCenter /><UiPolishEnhancer /></React.StrictMode>
+  <React.StrictMode><OpsV2 /><QuoteCalculator /><SheetSyncStatus /><EmployeeContactEnhancer /><AccountBalanceEnhancer /><SimpleDashboardEnhancer /><InventoryCostEnhancer /><PsssOrderCenter /><PsssSubscriptionCenter /></React.StrictMode>
 )
 
 if ('serviceWorker' in navigator) {
