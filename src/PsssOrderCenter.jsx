@@ -6,7 +6,6 @@ import { catalogTotal, cents, saleItems } from './lib/sale'
 const money = n => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(Number(n || 0))
 const dt = v => v ? new Date(v).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '—'
 const Field = ({ label, children }) => <label className="field"><span>{label}</span>{children}</label>
-
 const methodAccount = method => method === 'Apple Cash' ? 'Apple Cash' : ['Card', 'Zelle'].includes(method) ? 'SS Bank' : method === 'Other' ? 'Other' : 'SS Cash'
 
 export default function PsssOrderCenter() {
@@ -16,6 +15,7 @@ export default function PsssOrderCenter() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [products, setProducts] = useState([])
+  const [variants, setVariants] = useState([])
   const [orders, setOrders] = useState([])
   const [orderItems, setOrderItems] = useState([])
   const [tab, setTab] = useState('open')
@@ -23,6 +23,7 @@ export default function PsssOrderCenter() {
   const [customer, setCustomer] = useState('')
   const [notes, setNotes] = useState('')
   const [pid, setPid] = useState('')
+  const [vid, setVid] = useState('')
   const [qty, setQty] = useState('1')
   const [lines, setLines] = useState([])
   const [override, setOverride] = useState('')
@@ -44,27 +45,28 @@ export default function PsssOrderCenter() {
     return () => { mounted = false; sub.subscription.unsubscribe() }
   }, [])
 
-  useEffect(() => {
-    if (open && authorized) load()
-  }, [open, authorized])
+  useEffect(() => { if (open && authorized) load() }, [open, authorized])
+  useEffect(() => { if (!pid && products.length) setPid(products[0].id) }, [products, pid])
 
+  const selectedVariants = useMemo(() => variants.filter(v => v.product_id === pid && v.active !== false), [variants, pid])
   useEffect(() => {
-    if (!pid && products.length) setPid(products[0].id)
-  }, [products, pid])
+    if (!selectedVariants.length) { if (vid) setVid(''); return }
+    if (!selectedVariants.some(v => v.id === vid)) setVid(selectedVariants.find(v => Number(v.current_stock) > 0)?.id || selectedVariants[0].id)
+  }, [selectedVariants, vid])
 
   async function load() {
     setLoading(true)
     setError('')
     try {
-      const [p, o, i] = await Promise.all([
+      const [p, v, o, i] = await Promise.all([
         supabase.from('ops_products').select('*').eq('business_unit', 'PSSS').eq('active', true).order('name'),
+        supabase.from('ops_product_variants').select('*').eq('active', true).order('flavor'),
         supabase.from('ops_psss_orders').select('*').order('created_at', { ascending: false }).limit(300),
         supabase.from('ops_psss_order_items').select('*').order('created_at', { ascending: true }).limit(2000)
       ])
-      if (p.error) throw p.error
-      if (o.error) throw o.error
-      if (i.error) throw i.error
+      for (const q of [p, v, o, i]) if (q.error) throw q.error
       setProducts(p.data || [])
+      setVariants(v.data || [])
       setOrders(o.data || [])
       setOrderItems(i.data || [])
     } catch (e) {
@@ -83,17 +85,26 @@ export default function PsssOrderCenter() {
     return map
   }, [orderItems])
 
+  const openOrderIds = useMemo(() => new Set(orders.filter(o => o.fulfillment_status === 'preorder').map(o => o.id)), [orders])
   const reservedByProduct = useMemo(() => {
-    const openIds = new Set(orders.filter(o => o.fulfillment_status === 'preorder').map(o => o.id))
     const map = {}
     orderItems.forEach(item => {
-      if (openIds.has(item.order_id)) map[item.product_id] = (map[item.product_id] || 0) + Number(item.quantity || 0)
+      if (openOrderIds.has(item.order_id)) map[item.product_id] = (map[item.product_id] || 0) + Number(item.quantity || 0)
     })
     return map
-  }, [orders, orderItems])
+  }, [orderItems, openOrderIds])
+  const reservedByVariant = useMemo(() => {
+    const map = {}
+    orderItems.forEach(item => {
+      if (openOrderIds.has(item.order_id) && item.variant_id) map[item.variant_id] = (map[item.variant_id] || 0) + Number(item.quantity || 0)
+    })
+    return map
+  }, [orderItems, openOrderIds])
 
   const productById = useMemo(() => Object.fromEntries(products.map(p => [p.id, p])), [products])
+  const variantById = useMemo(() => Object.fromEntries(variants.map(v => [v.id, v])), [variants])
   const available = p => Math.max(0, Number(p?.current_stock || 0) - Number(reservedByProduct[p?.id] || 0))
+  const availableVariant = v => Math.max(0, Number(v?.current_stock || 0) - Number(reservedByVariant[v?.id] || 0))
 
   const openOrders = orders.filter(o => o.fulfillment_status === 'preorder')
   const reservedUnits = Object.values(reservedByProduct).reduce((s, n) => s + Number(n || 0), 0)
@@ -130,11 +141,27 @@ export default function PsssOrderCenter() {
     const n = Number(qty)
     if (!p) return setError('Choose a product.')
     if (!Number.isSafeInteger(n) || n < 1) return setError('Quantity must be a positive whole number.')
-    const existing = lines.find(l => l.product_id === p.id)?.quantity || 0
-    if (existing + n > available(p)) return setError(`Only ${available(p)} ${p.name} available after current preorders.`)
+
+    const flavorOptions = variants.filter(v => v.product_id === p.id && v.active !== false)
+    const variant = flavorOptions.find(v => v.id === vid)
+    if (flavorOptions.length && !variant) return setError(`Choose a flavor for ${p.name}.`)
+
+    const parentAlready = lines.filter(l => l.product_id === p.id).reduce((sum, l) => sum + Number(l.quantity || 0), 0)
+    if (parentAlready + n > available(p)) return setError(`Only ${available(p)} ${p.name} available after current preorders.`)
+
+    const key = `${p.id}:${variant?.id || ''}`
+    const existing = lines.find(l => `${l.product_id}:${l.variant_id || ''}` === key)?.quantity || 0
+    if (variant && existing + n > availableVariant(variant)) return setError(`Only ${availableVariant(variant)} ${variant.flavor} available after current preorders.`)
+
     const nextQty = existing + n
-    const next = { product_id: p.id, name: p.name, quantity: nextQty, catalogCents: catalogTotal(p, nextQty) }
-    setLines([...lines.filter(l => l.product_id !== p.id), next])
+    const next = {
+      product_id: p.id,
+      ...(variant ? { variant_id: variant.id } : {}),
+      name: variant ? `${p.name} — ${variant.flavor}` : p.name,
+      quantity: nextQty,
+      catalogCents: catalogTotal(p, nextQty)
+    }
+    setLines([...lines.filter(l => `${l.product_id}:${l.variant_id || ''}` !== key), next])
     setQty('1')
   }
 
@@ -221,8 +248,9 @@ export default function PsssOrderCenter() {
     const grouped = {}
     ;(itemsByOrder.get(order.id) || []).forEach(item => {
       const p = productById[item.product_id]
-      const key = item.product_id
-      if (!grouped[key]) grouped[key] = { name: p?.name || 'Product', qty: 0 }
+      const v = item.variant_id ? variantById[item.variant_id] : null
+      const key = `${item.product_id}:${item.variant_id || ''}`
+      if (!grouped[key]) grouped[key] = { name: v ? `${p?.name || 'Product'} — ${v.flavor}` : (p?.name || 'Product'), qty: 0 }
       grouped[key].qty += Number(item.quantity || 0)
     })
     return Object.values(grouped).map(x => `${x.qty}× ${x.name}`).join(', ') || 'No items'
@@ -267,19 +295,23 @@ export default function PsssOrderCenter() {
           <div className="formgrid">
             <Field label="Customer / buyer"><input value={customer} onChange={e => setCustomer(e.target.value)} placeholder="Name (optional)" /></Field>
             <Field label="Product"><select value={pid} onChange={e => setPid(e.target.value)}>{products.map(p => <option key={p.id} value={p.id}>{p.name} — {available(p)} available ({p.current_stock} physical)</option>)}</select></Field>
+            {selectedVariants.length > 0 && <Field label="Flavor"><select value={vid} onChange={e => setVid(e.target.value)}>{selectedVariants.map(v => <option key={v.id} value={v.id} disabled={availableVariant(v)<1}>{v.flavor} — {availableVariant(v)} available ({v.current_stock} physical)</option>)}</select></Field>}
             <Field label="Quantity"><input type="number" min="1" step="1" value={qty} onChange={e => setQty(e.target.value)} /></Field>
             <div className="field"><span>&nbsp;</span><button type="button" className="btn" onClick={addLine}>Add item</button></div>
           </div>
 
           <div className="list" style={{ marginTop: 10 }}>
-            {lines.map(line => <div className="rowcard" key={line.product_id}><div><strong>{line.quantity}× {line.name}</strong><div className="small muted">Catalog {money(line.catalogCents / 100)}</div></div><button type="button" className="btn sm danger" onClick={() => setLines(lines.filter(l => l.product_id !== line.product_id))}>Remove</button></div>)}
+            {lines.map(line => {
+              const key = `${line.product_id}:${line.variant_id || ''}`
+              return <div className="rowcard" key={key}><div><strong>{line.quantity}× {line.name}</strong><div className="small muted">Catalog {money(line.catalogCents / 100)}</div></div><button type="button" className="btn sm danger" onClick={() => setLines(lines.filter(l => `${l.product_id}:${l.variant_id || ''}` !== key))}>Remove</button></div>
+            })}
           </div>
 
           <div className="formgrid" style={{ marginTop: 12 }}>
             <Field label="Total (optional custom price)"><input type="number" min="0" step="0.01" placeholder={(subtotalCents / 100).toFixed(2)} value={override} onChange={e => setOverride(e.target.value)} /></Field>
             {mode === 'quick' && <Field label="Payment method"><select value={method} onChange={e => { const m = e.target.value; setMethod(m); setAccount(methodAccount(m)) }}>{['Cash','Apple Cash','Zelle','Card','Other'].map(m => <option key={m}>{m}</option>)}</select></Field>}
             {mode === 'quick' && <Field label="Deposit account"><select value={account} onChange={e => setAccount(e.target.value)}>{['SS Cash','SS Bank','Apple Cash','Personal Account','Other'].map(a => <option key={a}>{a}</option>)}</select></Field>}
-            <Field label="Notes"><textarea value={notes} onChange={e => setNotes(e.target.value)} placeholder={mode === 'preorder' ? 'Pickup details, flavors, etc.' : 'Optional'} /></Field>
+            <Field label="Notes"><textarea value={notes} onChange={e => setNotes(e.target.value)} placeholder={mode === 'preorder' ? 'Pickup details, etc.' : 'Optional'} /></Field>
           </div>
           <p><strong>Total: {money(totalCents / 100)}</strong>{mode === 'preorder' ? ' • Inventory is reserved now and deducted when picked up.' : ' • Cash and physical inventory update immediately.'}</p>
           <div className="actions" style={{ justifyContent: 'flex-end' }}><button type="button" className="btn" onClick={() => resetComposer(null)}>Cancel</button><button className="btn primary" disabled={busy || !lines.length}>{busy ? 'Saving…' : mode === 'preorder' ? 'Save preorder' : 'Complete paid sale'}</button></div>
@@ -287,7 +319,10 @@ export default function PsssOrderCenter() {
 
         <div className="card" style={{ marginBottom: 16 }}>
           <div className="sectionhead"><h3>Available inventory</h3><span className="small muted">Physical − reserved = available to sell</span></div>
-          <div className="list">{products.map(p => <div className="rowcard" key={p.id}><div><strong>{p.name}</strong><div className="small muted">Physical {p.current_stock} • Reserved {reservedByProduct[p.id] || 0}</div></div><strong>{available(p)} available</strong></div>)}</div>
+          <div className="list">{products.map(p => {
+            const pv = variants.filter(v => v.product_id === p.id && v.active !== false)
+            return <div className="rowcard" key={p.id}><div><strong>{p.name}</strong><div className="small muted">Physical {p.current_stock} • Reserved {reservedByProduct[p.id] || 0}{pv.length ? ` • ${pv.reduce((s,v)=>s+Number(v.current_stock||0),0)} assigned to flavors` : ''}</div>{pv.length > 0 && <div className="small muted" style={{marginTop:4}}>{pv.filter(v=>Number(v.current_stock)>0).map(v=>`${v.flavor}: ${availableVariant(v)}`).join(' • ') || 'No flavor counts entered yet'}</div>}</div><strong>{available(p)} available</strong></div>
+          })}</div>
         </div>
 
         <div className="tabs" style={{ marginBottom: 12, flexWrap: 'wrap' }}>
