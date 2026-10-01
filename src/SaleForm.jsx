@@ -1,13 +1,16 @@
-import React, { useRef, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { catalogTotal, cents, saleItems } from './lib/sale'
+import { supabase } from './lib/supabase'
 
 const money = n => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n)
 const Field = ({ label, children }) => <label className="field"><span>{label}</span>{children}</label>
 
 export default function SaleForm({ data, onClose, onSave, busy, error }) {
   const products = data.products.filter(p => p.business_unit === 'PSSS' && p.active)
+  const [variants,setVariants] = useState([])
   const [lines, setLines] = useState([])
   const [pid, setPid] = useState(products[0]?.id || '')
+  const [vid, setVid] = useState('')
   const [qty, setQty] = useState('1')
   const [pay, setPay] = useState('paid')
   const [method, setMethod] = useState('Cash')
@@ -20,13 +23,41 @@ export default function SaleForm({ data, onClose, onSave, busy, error }) {
   const submitting = useRef(false)
   const attempt = useRef(null)
 
+  useEffect(() => {
+    let mounted = true
+    supabase.from('ops_product_variants').select('id,product_id,flavor,current_stock,active').eq('active',true).order('flavor').then(({data,error}) => {
+      if (!mounted) return
+      if (!error) setVariants(data || [])
+    })
+    return () => { mounted = false }
+  }, [])
+
+  const selectedVariants = variants.filter(v => v.product_id === pid)
+  const selectedVariant = selectedVariants.find(v => v.id === vid)
+
+  useEffect(() => {
+    if (!selectedVariants.length) { if (vid) setVid(''); return }
+    if (!selectedVariants.some(v => v.id === vid)) setVid(selectedVariants.find(v => Number(v.current_stock)>0)?.id || selectedVariants[0].id)
+  }, [pid,variants])
+
   function selectedLine() {
     const product = products.find(p => p.id === pid)
     const quantity = Number(qty)
     if (!product) throw new Error('Choose a product first.')
     if (!Number.isSafeInteger(quantity) || quantity < 1) throw new Error('Quantity must be a positive whole number.')
-    if (quantity > Number(product.current_stock || 0)) throw new Error(`Only ${product.current_stock} ${product.name} available.`)
-    return { product_id: pid, name: product.name, quantity, catalogCents: catalogTotal(product, quantity) }
+    if (selectedVariants.length) {
+      if (!selectedVariant) throw new Error(`Choose a flavor for ${product.name}.`)
+      if (quantity > Number(selectedVariant.current_stock || 0)) throw new Error(`Only ${selectedVariant.current_stock} ${selectedVariant.flavor} available before reservations.`)
+    } else if (quantity > Number(product.current_stock || 0)) {
+      throw new Error(`Only ${product.current_stock} ${product.name} available.`)
+    }
+    return {
+      product_id: pid,
+      ...(selectedVariant ? { variant_id:selectedVariant.id } : {}),
+      name: selectedVariant ? `${product.name} — ${selectedVariant.flavor}` : product.name,
+      quantity,
+      catalogCents: catalogTotal(product, quantity)
+    }
   }
 
   const previewLines = lines.length ? lines : (() => { try { return [selectedLine()] } catch { return [] } })()
@@ -38,12 +69,23 @@ export default function SaleForm({ data, onClose, onSave, busy, error }) {
     try {
       const product = products.find(p => p.id === pid)
       const quantity = Number(qty)
-      const existing = lines.find(l => l.product_id === pid)?.quantity || 0
       if (!product) throw new Error('Choose a product first.')
       if (!Number.isSafeInteger(quantity) || quantity < 1) throw new Error('Quantity must be a positive whole number.')
-      if (existing + quantity > product.current_stock) throw new Error(`Only ${product.current_stock} ${product.name} available, including items already added.`)
-      const next = { product_id: pid, name: product.name, quantity: existing + quantity, catalogCents: catalogTotal(product, existing + quantity) }
-      setLines([...lines.filter(l => l.product_id !== pid), next])
+      const variant = variants.find(v => v.id === vid && v.product_id === pid)
+      if (selectedVariants.length && !variant) throw new Error(`Choose a flavor for ${product.name}.`)
+      const key = `${pid}:${variant?.id || ''}`
+      const existing = lines.find(l => `${l.product_id}:${l.variant_id || ''}` === key)?.quantity || 0
+      const limit = variant ? Number(variant.current_stock || 0) : Number(product.current_stock || 0)
+      if (existing + quantity > limit) throw new Error(`Only ${limit} ${variant?.flavor || product.name} available before reservations.`)
+      const nextQty = existing + quantity
+      const next = {
+        product_id: pid,
+        ...(variant ? { variant_id:variant.id } : {}),
+        name: variant ? `${product.name} — ${variant.flavor}` : product.name,
+        quantity: nextQty,
+        catalogCents: catalogTotal(product, nextQty)
+      }
+      setLines([...lines.filter(l => `${l.product_id}:${l.variant_id || ''}` !== key), next])
       setValidation('')
     } catch (e) {
       setValidation(e.message)
@@ -90,16 +132,20 @@ export default function SaleForm({ data, onClose, onSave, busy, error }) {
     <div className="modalhead"><h2 id="sale-title">Log PSSS sale</h2><button type="button" className="iconbtn" aria-label="Close sale" disabled={busy} onClick={onClose}>×</button></div>
     <form onSubmit={submit}>
       <fieldset disabled={busy} style={{ border: 0, padding: 0, margin: 0 }}>
-        <p className="small muted">Choose a product and quantity. You can add multiple items, or just press Save to use the current selection.</p>
+        <p className="small muted">Choose the product, flavor when needed, and quantity. Monster flavor sales now reduce that exact flavor and the overall Monster total together.</p>
         <div className="formgrid">
-          <Field label="Product"><select value={pid} onChange={e => setPid(e.target.value)}>{products.map(p => <option key={p.id} value={p.id}>{p.name} ({p.current_stock} left)</option>)}</select></Field>
+          <Field label="Product"><select value={pid} onChange={e => setPid(e.target.value)}>{products.map(p => <option key={p.id} value={p.id}>{p.name} ({p.current_stock} total)</option>)}</select></Field>
+          {selectedVariants.length > 0 && <Field label="Flavor"><select value={vid} onChange={e=>setVid(e.target.value)}>{selectedVariants.map(v=><option key={v.id} value={v.id} disabled={Number(v.current_stock)<1}>{v.flavor} ({v.current_stock} physical)</option>)}</select></Field>}
           <Field label="Quantity"><input type="number" min="1" step="1" value={qty} onChange={e => setQty(e.target.value)} /></Field>
         </div>
         <button type="button" className="btn" style={{ marginTop: 10 }} onClick={add}>Add item to sale</button>
         {!lines.length && <p className="small muted">Current selection will be included automatically when you press Save.</p>}
-        <div className="list" style={{ marginTop: 12 }}>{lines.map(line => <div className="rowcard" key={line.product_id}>
-          <div>{line.quantity} × {line.name}</div><div>{money(line.catalogCents / 100)} <button type="button" className="btn sm danger" aria-label={`Remove ${line.name}`} onClick={() => setLines(lines.filter(l => l.product_id !== line.product_id))}>Remove</button></div>
-        </div>)}</div>
+        <div className="list" style={{ marginTop: 12 }}>{lines.map(line => {
+          const key=`${line.product_id}:${line.variant_id || ''}`
+          return <div className="rowcard" key={key}>
+            <div>{line.quantity} × {line.name}</div><div>{money(line.catalogCents / 100)} <button type="button" className="btn sm danger" aria-label={`Remove ${line.name}`} onClick={() => setLines(lines.filter(l => `${l.product_id}:${l.variant_id || ''}` !== key))}>Remove</button></div>
+          </div>
+        })}</div>
         <div className="formgrid" style={{ marginTop: 14 }}>
           <Field label="Sale total (optional custom price)"><input type="number" min="0" step="0.01" placeholder={(subtotal / 100).toFixed(2)} value={override} onChange={e => setOverride(e.target.value)} /></Field>
           <Field label="Payment status"><select value={pay} onChange={e => setPay(e.target.value)}><option value="paid">Paid</option><option value="pending">Pending / owed</option><option value="partial">Partial</option></select></Field>
