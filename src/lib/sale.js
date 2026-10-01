@@ -22,9 +22,10 @@ export function saleItems(lines, totalCents) {
     allocated = through
     const unit = Math.floor(amount / line.quantity)
     const remainder = amount % line.quantity
+    const base = { product_id: line.product_id, ...(line.variant_id ? { variant_id: line.variant_id } : {}) }
     return [
-      { product_id: line.product_id, quantity: line.quantity - remainder, unit_price: unit / 100 },
-      { product_id: line.product_id, quantity: remainder, unit_price: (unit + 1) / 100 }
+      { ...base, quantity: line.quantity - remainder, unit_price: unit / 100 },
+      { ...base, quantity: remainder, unit_price: (unit + 1) / 100 }
     ].filter(item => item.quantity > 0)
   })
 }
