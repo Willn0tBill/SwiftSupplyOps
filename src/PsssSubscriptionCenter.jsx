@@ -29,6 +29,7 @@ export default function PsssSubscriptionCenter() {
   const [subscriptions, setSubscriptions] = useState([])
   const [redemptions, setRedemptions] = useState([])
   const [products, setProducts] = useState([])
+  const [variants, setVariants] = useState([])
   const [orders, setOrders] = useState([])
   const [orderItems, setOrderItems] = useState([])
   const [tab, setTab] = useState('active')
@@ -40,6 +41,7 @@ export default function PsssSubscriptionCenter() {
   const [notes, setNotes] = useState('')
   const [redeeming, setRedeeming] = useState(null)
   const [redeemPid, setRedeemPid] = useState('')
+  const [redeemVid, setRedeemVid] = useState('')
   const [renewing, setRenewing] = useState(null)
   const [renewMethod, setRenewMethod] = useState('Cash')
   const [renewAccount, setRenewAccount] = useState('SS Cash')
@@ -63,17 +65,19 @@ export default function PsssSubscriptionCenter() {
   async function load() {
     setLoading(true); setError('')
     try {
-      const [s, r, p, o, oi] = await Promise.all([
+      const [s, r, p, v, o, oi] = await Promise.all([
         supabase.from('ops_psss_subscriptions').select('*').order('created_at', { ascending: false }).limit(300),
         supabase.from('ops_psss_subscription_redemptions').select('*').order('redeemed_at', { ascending: false }).limit(1500),
         supabase.from('ops_products').select('*').eq('business_unit', 'PSSS').eq('active', true).order('name'),
+        supabase.from('ops_product_variants').select('*').eq('active', true).order('flavor'),
         supabase.from('ops_psss_orders').select('id,fulfillment_status').eq('fulfillment_status', 'preorder').limit(500),
-        supabase.from('ops_psss_order_items').select('order_id,product_id,quantity').limit(3000)
+        supabase.from('ops_psss_order_items').select('order_id,product_id,variant_id,quantity').limit(3000)
       ])
-      for (const q of [s, r, p, o, oi]) if (q.error) throw q.error
+      for (const q of [s, r, p, v, o, oi]) if (q.error) throw q.error
       setSubscriptions(s.data || [])
       setRedemptions(r.data || [])
       setProducts(p.data || [])
+      setVariants(v.data || [])
       setOrders(o.data || [])
       setOrderItems(oi.data || [])
       if (!redeemPid && p.data?.length) setRedeemPid(p.data[0].id)
@@ -82,16 +86,37 @@ export default function PsssSubscriptionCenter() {
     } finally { setLoading(false) }
   }
 
+  const openIds = useMemo(() => new Set(orders.map(o => o.id)), [orders])
   const reservedByProduct = useMemo(() => {
-    const openIds = new Set(orders.map(o => o.id))
     const out = {}
     orderItems.forEach(item => {
       if (openIds.has(item.order_id)) out[item.product_id] = (out[item.product_id] || 0) + Number(item.quantity || 0)
     })
     return out
-  }, [orders, orderItems])
+  }, [openIds, orderItems])
+  const reservedByVariant = useMemo(() => {
+    const out = {}
+    orderItems.forEach(item => {
+      if (openIds.has(item.order_id) && item.variant_id) out[item.variant_id] = (out[item.variant_id] || 0) + Number(item.quantity || 0)
+    })
+    return out
+  }, [openIds, orderItems])
 
   const available = p => Math.max(0, Number(p?.current_stock || 0) - Number(reservedByProduct[p?.id] || 0))
+  const availableVariant = v => Math.max(0, Number(v?.current_stock || 0) - Number(reservedByVariant[v?.id] || 0))
+  const variantsFor = productId => variants.filter(v => v.product_id === productId && v.active !== false)
+  const redeemVariants = variantsFor(redeemPid)
+  const productAvailableForRedeem = p => {
+    const pv = variantsFor(p.id)
+    return pv.length ? available(p) > 0 && pv.some(v => availableVariant(v) > 0) : available(p) > 0
+  }
+
+  useEffect(() => {
+    if (!redeemVariants.length) { if (redeemVid) setRedeemVid(''); return }
+    if (!redeemVariants.some(v => v.id === redeemVid && availableVariant(v) > 0)) {
+      setRedeemVid(redeemVariants.find(v => availableVariant(v) > 0)?.id || redeemVariants[0].id)
+    }
+  }, [redeemPid, variants, reservedByVariant])
 
   const recentBySub = useMemo(() => {
     const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000
@@ -109,7 +134,6 @@ export default function PsssSubscriptionCenter() {
   const activeCredits = active.reduce((sum, s) => sum + Number(s.credits_remaining || 0), 0)
   const recurring = active.reduce((sum, s) => sum + Number(s.monthly_price || 0), 0)
   const recentRedeems = redemptions.filter(r => new Date(r.redeemed_at).getTime() >= Date.now() - 7 * 24 * 60 * 60 * 1000).length
-
   const filtered = tab === 'active' ? active : tab === 'expired' ? expired : tab === 'paused' ? paused : cancelled
 
   async function createPass(e) {
@@ -137,16 +161,23 @@ export default function PsssSubscriptionCenter() {
     const p = products.find(x => x.id === redeemPid)
     if (!p) return setError('Choose a drink first.')
     if (available(p) < 1) return setError(`${p.name} has no unreserved stock available.`)
+    const pv = variantsFor(p.id)
+    const v = pv.find(x => x.id === redeemVid)
+    if (pv.length && !v) return setError(`Choose a flavor for ${p.name}.`)
+    if (v && availableVariant(v) < 1) return setError(`${v.flavor} has no unreserved stock available.`)
+
     setBusy(true); setError(''); setNotice('')
     try {
-      const { error: rpcError } = await supabase.rpc('ops_redeem_psss_subscription', {
+      const { error: rpcError } = await supabase.rpc('ops_redeem_psss_subscription_variant', {
         p_subscription_id: redeeming.id,
         p_product_id: p.id,
+        p_variant_id: v?.id || null,
         p_notes: null
       })
       if (rpcError) throw rpcError
-      setNotice(`${redeeming.subscriber_name} redeemed 1 ${p.name}. Inventory and COGS were updated automatically.`)
+      setNotice(`${redeeming.subscriber_name} redeemed 1 ${v ? `${p.name} — ${v.flavor}` : p.name}. Inventory and COGS were updated automatically.`)
       setRedeeming(null)
+      setRedeemVid('')
       await load()
     } catch (e) { setError(e.message || 'Could not redeem drink.') }
     finally { setBusy(false) }
@@ -185,8 +216,11 @@ export default function PsssSubscriptionCenter() {
 
   function openRedeem(sub) {
     setError(''); setNotice(''); setRedeeming(sub)
-    const first = products.find(p => available(p) > 0)
-    setRedeemPid(first?.id || products[0]?.id || '')
+    const first = products.find(productAvailableForRedeem)
+    const nextPid = first?.id || products[0]?.id || ''
+    setRedeemPid(nextPid)
+    const firstVariant = variantsFor(nextPid).find(v => availableVariant(v) > 0)
+    setRedeemVid(firstVariant?.id || '')
   }
 
   function redeemBlockedReason(sub) {
@@ -280,9 +314,10 @@ export default function PsssSubscriptionCenter() {
         {redeeming && <div className="modalback" style={{ zIndex: 9700 }} onMouseDown={e => e.target === e.currentTarget && setRedeeming(null)}>
           <div className="modal" style={{ width: 'min(520px, calc(100vw - 28px))' }}>
             <div className="modalhead"><div><h3>Redeem a drink</h3><div className="small muted">{redeeming.subscriber_name} • {redeeming.credits_remaining} credits remaining</div></div><button className="iconbtn" onClick={() => setRedeeming(null)}><X size={16}/></button></div>
-            <Field label="Drink"><select value={redeemPid} onChange={e => setRedeemPid(e.target.value)}>{products.map(p => <option key={p.id} value={p.id} disabled={available(p)<1}>{p.name} — {available(p)} available ({p.current_stock} physical)</option>)}</select></Field>
-            <div className="small muted" style={{ marginTop: 10 }}>Redeeming removes one drink from inventory and one credit from the pass. It does not record new revenue because the monthly pass was already paid.</div>
-            <div className="actions" style={{ marginTop: 16, justifyContent: 'flex-end' }}><button className="btn" onClick={() => setRedeeming(null)}>Cancel</button><button className="btn primary" disabled={busy || !redeemPid} onClick={redeem}>{busy ? 'Redeeming…' : 'Redeem 1 drink'}</button></div>
+            <Field label="Drink"><select value={redeemPid} onChange={e => setRedeemPid(e.target.value)}>{products.map(p => <option key={p.id} value={p.id} disabled={!productAvailableForRedeem(p)}>{p.name} — {available(p)} total available ({p.current_stock} physical)</option>)}</select></Field>
+            {redeemVariants.length > 0 && <Field label="Flavor"><select value={redeemVid} onChange={e => setRedeemVid(e.target.value)}>{redeemVariants.map(v => <option key={v.id} value={v.id} disabled={availableVariant(v)<1}>{v.flavor} — {availableVariant(v)} available ({v.current_stock} physical)</option>)}</select></Field>}
+            <div className="small muted" style={{ marginTop: 10 }}>Redeeming removes one exact drink flavor when applicable, one unit from the overall drink inventory, and one credit from the pass. It does not record new revenue because the monthly pass was already paid.</div>
+            <div className="actions" style={{ marginTop: 16, justifyContent: 'flex-end' }}><button className="btn" onClick={() => setRedeeming(null)}>Cancel</button><button className="btn primary" disabled={busy || !redeemPid || (redeemVariants.length>0 && !redeemVid)} onClick={redeem}>{busy ? 'Redeeming…' : 'Redeem 1 drink'}</button></div>
           </div>
         </div>}
 
