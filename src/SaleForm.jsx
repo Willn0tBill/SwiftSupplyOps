@@ -32,13 +32,16 @@ export default function SaleForm({ data, onClose, onSave, busy, error }) {
     return () => { mounted = false }
   }, [])
 
+  const selectedProduct = products.find(p => p.id === pid)
   const selectedVariants = variants.filter(v => v.product_id === pid)
   const selectedVariant = selectedVariants.find(v => v.id === vid)
+  const assignedStock = selectedVariants.reduce((sum,v) => sum + Number(v.current_stock || 0), 0)
+  const unassignedStock = Math.max(0, Number(selectedProduct?.current_stock || 0) - assignedStock)
 
   useEffect(() => {
     if (!selectedVariants.length) { if (vid) setVid(''); return }
-    if (!selectedVariants.some(v => v.id === vid)) setVid(selectedVariants.find(v => Number(v.current_stock)>0)?.id || selectedVariants[0].id)
-  }, [pid,variants])
+    if (vid && !selectedVariants.some(v => v.id === vid)) setVid('')
+  }, [pid,variants,vid,selectedVariants.length])
 
   function selectedLine() {
     const product = products.find(p => p.id === pid)
@@ -46,15 +49,18 @@ export default function SaleForm({ data, onClose, onSave, busy, error }) {
     if (!product) throw new Error('Choose a product first.')
     if (!Number.isSafeInteger(quantity) || quantity < 1) throw new Error('Quantity must be a positive whole number.')
     if (selectedVariants.length) {
-      if (!selectedVariant) throw new Error(`Choose a flavor for ${product.name}.`)
-      if (quantity > Number(selectedVariant.current_stock || 0)) throw new Error(`Only ${selectedVariant.current_stock} ${selectedVariant.flavor} available before reservations.`)
+      if (selectedVariant) {
+        if (quantity > Number(selectedVariant.current_stock || 0)) throw new Error(`Only ${selectedVariant.current_stock} ${selectedVariant.flavor} available before reservations.`)
+      } else if (quantity > unassignedStock) {
+        throw new Error(`Only ${unassignedStock} unassigned ${product.name} available. Assign flavor stock or choose a flavor that has inventory.`)
+      }
     } else if (quantity > Number(product.current_stock || 0)) {
       throw new Error(`Only ${product.current_stock} ${product.name} available.`)
     }
     return {
       product_id: pid,
       ...(selectedVariant ? { variant_id:selectedVariant.id } : {}),
-      name: selectedVariant ? `${product.name} — ${selectedVariant.flavor}` : product.name,
+      name: selectedVariant ? `${product.name} — ${selectedVariant.flavor}` : selectedVariants.length ? `${product.name} — flavor not logged` : product.name,
       quantity,
       catalogCents: catalogTotal(product, quantity)
     }
@@ -72,16 +78,15 @@ export default function SaleForm({ data, onClose, onSave, busy, error }) {
       if (!product) throw new Error('Choose a product first.')
       if (!Number.isSafeInteger(quantity) || quantity < 1) throw new Error('Quantity must be a positive whole number.')
       const variant = variants.find(v => v.id === vid && v.product_id === pid)
-      if (selectedVariants.length && !variant) throw new Error(`Choose a flavor for ${product.name}.`)
       const key = `${pid}:${variant?.id || ''}`
       const existing = lines.find(l => `${l.product_id}:${l.variant_id || ''}` === key)?.quantity || 0
-      const limit = variant ? Number(variant.current_stock || 0) : Number(product.current_stock || 0)
-      if (existing + quantity > limit) throw new Error(`Only ${limit} ${variant?.flavor || product.name} available before reservations.`)
+      const limit = variant ? Number(variant.current_stock || 0) : selectedVariants.length ? unassignedStock : Number(product.current_stock || 0)
+      if (existing + quantity > limit) throw new Error(`Only ${limit} ${variant?.flavor || (selectedVariants.length ? 'unassigned cans' : product.name)} available before reservations.`)
       const nextQty = existing + quantity
       const next = {
         product_id: pid,
         ...(variant ? { variant_id:variant.id } : {}),
-        name: variant ? `${product.name} — ${variant.flavor}` : product.name,
+        name: variant ? `${product.name} — ${variant.flavor}` : selectedVariants.length ? `${product.name} — flavor not logged` : product.name,
         quantity: nextQty,
         catalogCents: catalogTotal(product, nextQty)
       }
@@ -132,10 +137,10 @@ export default function SaleForm({ data, onClose, onSave, busy, error }) {
     <div className="modalhead"><h2 id="sale-title">Log PSSS sale</h2><button type="button" className="iconbtn" aria-label="Close sale" disabled={busy} onClick={onClose}>×</button></div>
     <form onSubmit={submit}>
       <fieldset disabled={busy} style={{ border: 0, padding: 0, margin: 0 }}>
-        <p className="small muted">Choose the product, flavor when needed, and quantity. Monster flavor sales now reduce that exact flavor and the overall Monster total together.</p>
+        <p className="small muted">Choose a flavor when you have already counted it. If your Monster total is correct but the flavor has not been entered yet, use “Flavor not logged / unassigned” and the sale will still reduce the overall Monster stock.</p>
         <div className="formgrid">
-          <Field label="Product"><select value={pid} onChange={e => setPid(e.target.value)}>{products.map(p => <option key={p.id} value={p.id}>{p.name} ({p.current_stock} total)</option>)}</select></Field>
-          {selectedVariants.length > 0 && <Field label="Flavor"><select value={vid} onChange={e=>setVid(e.target.value)}>{selectedVariants.map(v=><option key={v.id} value={v.id} disabled={Number(v.current_stock)<1}>{v.flavor} ({v.current_stock} physical)</option>)}</select></Field>}
+          <Field label="Product"><select value={pid} onChange={e => { setPid(e.target.value); setVid('') }}>{products.map(p => <option key={p.id} value={p.id}>{p.name} ({p.current_stock} total)</option>)}</select></Field>
+          {selectedVariants.length > 0 && <Field label="Flavor"><select value={vid} onChange={e=>setVid(e.target.value)}><option value="" disabled={unassignedStock < 1}>Flavor not logged / unassigned ({unassignedStock} available)</option>{selectedVariants.map(v=><option key={v.id} value={v.id} disabled={Number(v.current_stock)<1}>{v.flavor} ({v.current_stock} physical)</option>)}</select></Field>}
           <Field label="Quantity"><input type="number" min="1" step="1" value={qty} onChange={e => setQty(e.target.value)} /></Field>
         </div>
         <button type="button" className="btn" style={{ marginTop: 10 }} onClick={add}>Add item to sale</button>
