@@ -1,5 +1,11 @@
 # SwiftSupply Ops
 
+**A SwiftSupply operations platform under Wtv Innovations (WtvI).** SwiftSupply remains the customer-facing brand; WtvI is the parent company and developer of games, software, websites and business systems.
+
+WtvI: https://willn0tbill.github.io/WtvStudios/
+
+
+
 Mobile-first internal operations portal for **SS Vending**, **SwiftSupply Power Washing (SSPW)**, and **Personal Selling for SwiftSupply (PSSS)**.
 
 ## What is already built
